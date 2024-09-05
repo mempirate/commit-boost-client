@@ -2,7 +2,8 @@ use alloy::rpc::types::beacon::relay::ValidatorRegistration;
 use async_trait::async_trait;
 use axum::{http::HeaderMap, Router};
 use cb_common::pbs::{
-    GetHeaderParams, GetHeaderResponse, SignedBlindedBeaconBlock, SubmitBlindedBlockResponse,
+    BuilderBid, GetHeaderParams, GetHeaderResponse, SignedBlindedBeaconBlock,
+    SubmitBlindedBlockResponse,
 };
 
 use crate::{
@@ -11,9 +12,9 @@ use crate::{
 };
 
 #[async_trait]
-pub trait BuilderApi<S: BuilderApiState>: 'static {
+pub trait BuilderApi<S: BuilderApiState, R: BuilderBid = GetHeaderResponse>: 'static {
     /// Use to extend the BuilderApi
-    fn extra_routes() -> Option<Router<PbsState<S>>> {
+    fn extra_routes() -> Option<Router<PbsState<S, R>>> {
         None
     }
 
