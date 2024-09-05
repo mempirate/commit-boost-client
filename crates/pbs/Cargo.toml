@@ -24,6 +24,7 @@ dashmap.workspace = true
 
 # serialization
 serde_json.workspace = true
+serde.workspace = true
 
 # telemetry
 tracing.workspace = true

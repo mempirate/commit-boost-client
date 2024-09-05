@@ -3,7 +3,7 @@ use alloy::{
     rpc::types::beacon::{BlsPublicKey, BlsSignature},
 };
 use ethereum_types::U256 as EU256;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use ssz_derive::{Decode, Encode};
 use tree_hash_derive::TreeHash;
 
@@ -21,20 +21,33 @@ pub struct GetHeaderParams {
     pub pubkey: BlsPublicKey,
 }
 
+/// Trait for builder bid types (e.g. [GetHeaderResponse] and
+/// variants).
+pub trait BuilderBid: Clone + Send + Sync + DeserializeOwned + 'static {
+    fn block_hash(&self) -> B256;
+    fn pubkey(&self) -> BlsPublicKey;
+    fn value(&self) -> U256;
+    fn header(&self) -> &SignedExecutionPayloadHeader;
+}
+
 /// Returned by relay in get_header
 pub type GetHeaderResponse = VersionedResponse<SignedExecutionPayloadHeader>;
 
-impl GetHeaderResponse {
-    pub fn block_hash(&self) -> B256 {
+impl BuilderBid for GetHeaderResponse {
+    fn block_hash(&self) -> B256 {
         self.data.message.header.block_hash
     }
 
-    pub fn pubkey(&self) -> BlsPublicKey {
+    fn pubkey(&self) -> BlsPublicKey {
         self.data.message.pubkey
     }
 
-    pub fn value(&self) -> U256 {
+    fn value(&self) -> U256 {
         self.data.message.value()
+    }
+
+    fn header(&self) -> &SignedExecutionPayloadHeader {
+        &self.data
     }
 }
 

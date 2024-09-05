@@ -9,8 +9,8 @@ use cb_common::{
     config::PbsConfig,
     pbs::{
         error::{PbsError, ValidationError},
-        GetHeaderParams, GetHeaderResponse, RelayClient, SignedExecutionPayloadHeader,
-        EMPTY_TX_ROOT_HASH, HEADER_SLOT_UUID_KEY, HEADER_START_TIME_UNIX_MS,
+        BuilderBid, GetHeaderParams, RelayClient, SignedExecutionPayloadHeader, EMPTY_TX_ROOT_HASH,
+        HEADER_SLOT_UUID_KEY, HEADER_START_TIME_UNIX_MS,
     },
     signature::verify_signed_builder_message,
     types::Chain,
@@ -30,11 +30,18 @@ use crate::{
 
 /// Implements https://ethereum.github.io/builder-specs/#/Builder/getHeader
 /// Returns 200 if at least one relay returns 200, else 204
-pub async fn get_header<S: BuilderApiState>(
+pub async fn get_header<S, R, F>(
+    target: impl AsRef<str>,
     params: GetHeaderParams,
     req_headers: HeaderMap,
-    state: PbsState<S>,
-) -> eyre::Result<Option<GetHeaderResponse>> {
+    state: PbsState<S, R>,
+    eval_bid: F,
+) -> eyre::Result<Option<R>>
+where
+    S: BuilderApiState,
+    R: BuilderBid,
+    F: Fn(&PbsState<S, R>, &R) -> bool,
+{
     let ms_into_slot = ms_into_slot(params.slot, state.config.chain);
     let max_timeout_ms = state
         .pbs_config()
@@ -62,6 +69,7 @@ pub async fn get_header<S: BuilderApiState>(
     let mut handles = Vec::with_capacity(relays.len());
     for relay in relays.iter() {
         handles.push(send_timed_get_header(
+            target.as_ref(),
             params,
             relay.clone(),
             state.config.chain,
@@ -78,7 +86,11 @@ pub async fn get_header<S: BuilderApiState>(
         let relay_id = relays[i].id.as_ref();
 
         match res {
-            Ok(Some(res)) => relay_bids.push(res),
+            Ok(Some(res)) => {
+                if eval_bid(&state, &res) {
+                    relay_bids.push(res);
+                }
+            }
             Ok(_) => {}
             Err(err) if err.is_timeout() => error!(err = "Timed Out", relay_id),
             Err(err) => error!(?err, relay_id),
@@ -88,8 +100,10 @@ pub async fn get_header<S: BuilderApiState>(
     Ok(state.add_bids(params.slot, relay_bids))
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "handler", fields(relay_id = relay.id.as_ref()))]
-async fn send_timed_get_header(
+async fn send_timed_get_header<R: BuilderBid>(
+    target: &str,
     params: GetHeaderParams,
     relay: RelayClient,
     chain: Chain,
@@ -97,8 +111,11 @@ async fn send_timed_get_header(
     headers: HeaderMap,
     ms_into_slot: u64,
     mut timeout_left_ms: u64,
-) -> Result<Option<GetHeaderResponse>, PbsError> {
-    let url = relay.get_header_url(params.slot, params.parent_hash, params.pubkey)?;
+) -> Result<Option<R>, PbsError> {
+    let url = relay.builder_api_url(&format!(
+        "/{}/{}/{}/{}",
+        target, params.slot, params.parent_hash, params.pubkey
+    ))?;
 
     if relay.config.enable_timing_games {
         if let Some(target_ms) = relay.config.target_first_request_ms {
@@ -199,14 +216,14 @@ struct RequestConfig {
     headers: HeaderMap,
 }
 
-async fn send_one_get_header(
+async fn send_one_get_header<R: BuilderBid>(
     params: GetHeaderParams,
     relay: RelayClient,
     chain: Chain,
     skip_sigverify: bool,
     min_bid_wei: U256,
     mut req_config: RequestConfig,
-) -> Result<(u64, Option<GetHeaderResponse>), PbsError> {
+) -> Result<(u64, Option<R>), PbsError> {
     // the timestamp in the header is the consensus block time which is fixed,
     // use the beginning of the request as proxy to make sure we use only the
     // last one received
@@ -257,7 +274,7 @@ async fn send_one_get_header(
         return Ok((start_request_time, None));
     }
 
-    let get_header_response: GetHeaderResponse = serde_json::from_slice(&response_bytes)?;
+    let get_header_response: R = serde_json::from_slice(&response_bytes)?;
 
     debug!(
         latency = ?request_latency,
@@ -267,7 +284,7 @@ async fn send_one_get_header(
     );
 
     validate_header(
-        &get_header_response.data,
+        get_header_response.header(),
         chain,
         relay.pubkey(),
         params.parent_hash,

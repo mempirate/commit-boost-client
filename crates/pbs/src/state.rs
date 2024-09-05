@@ -6,7 +6,7 @@ use std::{
 use alloy::{primitives::B256, rpc::types::beacon::BlsPublicKey};
 use cb_common::{
     config::{PbsConfig, PbsModuleConfig},
-    pbs::{BuilderEvent, GetHeaderResponse, RelayClient},
+    pbs::{BuilderBid, BuilderEvent, GetHeaderResponse, RelayClient},
 };
 use dashmap::DashMap;
 use uuid::Uuid;
@@ -17,7 +17,7 @@ impl BuilderApiState for () {}
 /// State for the Pbs module. It can be extended by adding extra data to the
 /// state
 #[derive(Clone)]
-pub struct PbsState<S: BuilderApiState = ()> {
+pub struct PbsState<S: BuilderApiState = (), R: BuilderBid = GetHeaderResponse> {
     /// Config data for the Pbs service
     pub config: PbsModuleConfig,
     /// Opaque extra data for library use
@@ -25,7 +25,7 @@ pub struct PbsState<S: BuilderApiState = ()> {
     /// Info about the latest slot and its uuid
     current_slot_info: Arc<Mutex<(u64, Uuid)>>,
     /// Keeps track of which relays delivered which block for which slot
-    bid_cache: Arc<DashMap<u64, Vec<GetHeaderResponse>>>,
+    bid_cache: Arc<DashMap<u64, Vec<R>>>,
 }
 
 impl PbsState<()> {
@@ -48,9 +48,10 @@ impl PbsState<()> {
     }
 }
 
-impl<S> PbsState<S>
+impl<S, R> PbsState<S, R>
 where
     S: BuilderApiState,
+    R: BuilderBid,
 {
     pub fn publish_event(&self, e: BuilderEvent) {
         if let Some(publisher) = self.config.event_publiher.as_ref() {
@@ -88,7 +89,7 @@ where
 
     /// Add some bids to the cache, the bids are all assumed to be for the
     /// provided slot Returns the bid with the max value
-    pub fn add_bids(&self, slot: u64, bids: Vec<GetHeaderResponse>) -> Option<GetHeaderResponse> {
+    pub fn add_bids(&self, slot: u64, bids: Vec<R>) -> Option<R> {
         let mut slot_entry = self.bid_cache.entry(slot).or_default();
         slot_entry.extend(bids);
         slot_entry.iter().max_by_key(|bid| bid.value()).cloned()

@@ -5,7 +5,7 @@ use axum::{
     response::IntoResponse,
 };
 use cb_common::{
-    pbs::{BuilderEvent, GetHeaderParams},
+    pbs::{BuilderBid, BuilderEvent, GetHeaderParams},
     utils::{get_user_agent, ms_into_slot},
 };
 use reqwest::StatusCode;
